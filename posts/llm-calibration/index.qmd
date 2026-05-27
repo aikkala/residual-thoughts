@@ -7,14 +7,14 @@ description: "We train a 3B language model to express calibrated confidence usin
 image: probe_results.png
 ---
 
-Large language models can be prompted to explicitly express *confidence* in their answers. However, the expressed confidence may not correlate with correctness of the answers: Ask a 3B model who directed an obscure 1970s film and it might answer with the same assured tone as when you ask it the capital of France. This is miscalibration -- a mismatch between expressed and warranted confidence -- and it's a fundamental problem for any system that needs to communicate its own reliability.
+Large language models can be prompted to explicitly express confidence in their answers. However, the expressed confidence may not correlate with correctness of the answers: Ask a 3B model who directed an obscure 1970s film and it might answer with the same assured tone as when you ask it the capital of France. This is miscalibration -- a mismatch between expressed and warranted confidence -- and it's a fundamental problem for any system that needs to communicate its own reliability.
 
 The interesting question isn't just *can we fix this* but *why does it happen in the first place?* Two very different accounts are possible:
 
 1. **Representation failure**: the model simply doesn't know what it doesn't know -- the uncertainty information isn't in the model at all, and training on confidence labels can't create it from scratch.
 2. **Expression failure**: the model *does* have the relevant internal signal, but lacks a mechanism to translate it into a confidence output.
 
-These have different implications. If it's a representation problem, there's not much we could apart from training a bigger model with more capacity to store factual answers. If it's an expression problem, targeted training may be enough to *calibrate* the model translate uncertainty into the expressed confidence value. This post describes an experiment that tried to find out which one it is.
+These have different implications. If it's a representation problem, there's not much we could do apart from training a bigger model with more capacity to store factual knowledge. If it's an expression problem, targeted training may be enough to calibrate the model to translate uncertainty into the expressed confidence value. This post describes an experiment that tried to find out which one it is.
 
 ## The Setup
 
@@ -32,11 +32,11 @@ where the first element is its confidence (`"high"` or `"low"`), and the second 
 | **Incorrect**   | −2              | −1             |
 | **Unparseable** | −1.5            | —              |
 
-High confidence is only the rational choice when the model expects to be right more than 50% of the time. An unparseable output gets −1.5 -- worse than a low-confidence wrong answer -- so the model won't learn to output arbitrary outputs.
+High confidence is the rational choice when the model expects to be right more than 50% of the time. An unparseable output gets −1.5 -- worse than a low-confidence wrong answer -- so the model won't learn to output arbitrary outputs.
 
-We trained on [PopQA](https://arxiv.org/abs/2212.10511), a factual QA dataset built from Wikidata with entity popularity scores that serve as a natural difficulty proxy. One important practical finding: training data difficulty acts as an implicit regulariser. Training on questions the model almost always gets right causes it to collapse to always saying "high confidence"; training on questions it almost never gets right causes it to always say "low confidence". We found the sweet spot at `min_popularity=20,000`, where training accuracy sits around 30–40% and both confidence labels are sometimes optimal. Training at `min_popularity=50,000` (easier questions) produced a finetuned model with ECE 0.49 -- nearly identical to the untrained base model.
+We trained on [PopQA](https://arxiv.org/abs/2212.10511), a factual QA dataset built from Wikidata with entity popularity scores that serve as a natural difficulty proxy. One important practical finding: training data difficulty acts as an implicit regulariser. Training on questions the model almost always gets right causes it to collapse to always saying "high confidence"; training on questions it almost never gets right causes it to always say "low confidence". We found the sweet spot at `min_popularity=20,000`, where training accuracy sits around 30–40%. Training at `min_popularity=50,000` (easier questions) produced a finetuned model with ECE 0.49 -- nearly identical to the untrained base model.
 
-We also tested two baselines using the base model without finetuning: **direct prompting** (same JSON format, no reasoning) and **chain-of-thought prompting** (brief reasoning before the answer).
+We also tested two baselines using the base model without finetuning: **direct prompting** (same JSON format, no reasoning) and **chain-of-thought prompting** (CoT; brief reasoning before the answer).
 
 ## Behavioral Results
 
@@ -79,21 +79,21 @@ We tested on TriviaQA without any further training:
 | High-conf rate       | 0.892 ± 0.012 | 0.798 ± 0.004     | 0.700 ± 0.022     |
 | Calibration gap ↑     | **0.366 ± 0.043** | 0.262 ± 0.042 | 0.232 ± 0.026  |
 
-The ECE improvement is modest (0.322 -> 0.290) compared to PopQA, and calibration gap decreases (0.366 -> 0.232). Furthermore, CoT achieves comparable calibration to the finetuned model (ECE 0.293 vs 0.290). This indicatest that the finetuned model's calibration behavior does not generalise beyond its training distribution.
+The ECE improvement is modest (0.322 -> 0.290) compared to PopQA, and calibration gap decreases (0.366 -> 0.232). Furthermore, CoT achieves comparable calibration to the finetuned model (ECE 0.293 vs 0.290). This indicates that the finetuned model's calibration behavior does not strongly generalise beyond its training distribution. PopQA's entity-centric format and popularity-correlated difficulty may allow the model to learn confidence signals tied to detectable surface features (such as entity name familiarity) that do not transfer to TriviaQA's more varied question distribution, where correctness is harder to predict from any single input feature.
 
 **Accuracy as a side effect**
 
-A somewhat surprising finding: calibration training also improved factual accuracy on PopQA by +3.5% ± 0.8%, statistically significant in all three seeds (McNemar's test, p < 0.005). The effect is concentrated in higher-popularity questions (+7.1% in Q4 vs +1.9% in Q1) and is absent on TriviaQA. This is consistent with RL training improving factual recall as a side effect -- a pattern also observed in [DeepSeek-R1](https://arxiv.org/abs/2402.03300) for reasoning tasks. On examples where the finetuned model expressed high confidence, the base model was already correct 55–58% of the time (vs 16.5% overall), confirming the model learned to select questions it was already close to answering correctly.
+A somewhat surprising finding: calibration training also improved factual accuracy on PopQA by +3.5% ± 0.8%, statistically significant in all three seeds (McNemar's test, p < 0.005). The effect is concentrated in higher-popularity questions (+7.1% in Q4 vs +1.9% in Q1) and is absent on TriviaQA (McNemar's test, p=286). This is consistent with RL training improving factual recall as a side effect -- a pattern also observed in [DeepSeek-R1](https://arxiv.org/abs/2402.03300) for reasoning tasks.
 
 ## What's Happening Inside?
 
-Here's where it gets interesting. We trained linear probes on the residual stream activations at the position of the final prompt token -- the point right before the model starts generating -- for all 28 layers of both the base and finetuned models. This approach is similar to that presented in [Azaria & Mitchell, 2023](https://arxiv.org/abs/2304.13734), where they trained classifiers to predict the correctness of a statement based on hidden layer activations.
+We trained linear probes on the residual stream activations at the position of the final prompt token -- the point right before the model starts generating -- for all 28 layers of both the base and finetuned models. This approach is similar to that presented in [Azaria & Mitchell, 2023](https://arxiv.org/abs/2304.13734), where they trained classifiers to predict the correctness of a statement based on hidden layer activations.
 
 The question: does the internal representation predict whether the model will get the answer right, and does this change after finetuning?
 
 ![Probe AUC across transformer layers for base model, finetuned model, and cross-dataset transfer (train on PopQA, test on TriviaQA).](probe_results.png)
 
-**The base model already knows.** Probe AUC rises from 0.70 at layer 0 to a broad plateau of ~0.85–0.86 from layer 9 onwards. Before any calibration training, the model's internal representations are already strongly predictive of whether it will answer correctly. The uncertainty information is *there* -- the model just doesn't express it.
+**The base model already knows.** Probe AUC rises from 0.70 at layer 0 to a broad plateau of ~0.85–0.86 from layer 11 onwards. Before any calibration training, the model's internal representations are already strongly predictive of whether it will answer correctly. The uncertainty information is there -- the model just doesn't express it.
 
 **Finetuning reduces linear probe AUC.** The finetuned model shows consistently lower probe AUC, especially across later layers, a gap of about 0.05 relative to the base model. This is the surprising result: dramatically better behavioral calibration (ECE 0.069 vs 0.525) is accompanied by *less* linearly separable internal representations. The correctness-predictive information becomes harder to decode with a linear probe, yet the model's outputs become much better calibrated.
 
@@ -103,11 +103,11 @@ This suggests calibration training reorganises how uncertainty information is en
 - GRPO training partially "uses up" the correctness-predictive signal by routing it through the confidence output, leaving a weaker residual in the activations.
 - The probe captures both genuine uncertainty information and question-difficulty surface features; finetuning on filtered training data (`min_popularity ≥ 20,000`) selectively reduces the surface-feature component.
 
-Distinguishing between these would require causal intervention experiments -- activation patching to test whether specific layer activations causally influence the confidence output. We leave that for future work.
+Distinguishing between these would require causal intervention experiments, e.g., activation patching to test whether specific layer activations causally influence the confidence output. Perhap's we'll get to that at some point.
 
 **Does the representation generalise across datasets?**
 
-We trained probes on PopQA activations and evaluated on TriviaQA activations (with the test set downsampled to match the 15% PopQA positive rate). Cross-dataset AUC peaks (>0.6) in mid-layers (12–19), with near-chance performance in the first 7 layers. The early-layer signal doesn't transfer — it's capturing PopQA-specific question features. The mid-layer signal generalises, consistent with those layers encoding more abstract semantic content.
+We trained probes on PopQA activations and evaluated on TriviaQA activations (with the test set downsampled to match the 15% PopQA positive rate). Cross-dataset AUC peaks (>0.6) in mid-layers (11–19), with near-chance performance in the first 7 layers. The early-layer signal doesn't transfer -- it's capturing PopQA-specific question features. The mid-layer signal generalises, consistent with those layers encoding more abstract semantic content.
 
 ## What This Means
 
