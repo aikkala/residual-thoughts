@@ -1,19 +1,16 @@
 ---
 title: "About"
-image: profile.jpg
+image: profile.png
 about:
   template: jolla
   links:
-    - icon: bluesky
-      text: Bluesky
-      href: https://bsky.app/
     - icon: linkedin
       text: LinkedIn
-      href: https://linkedin.com
+      href: https://linkedin.com/in/aikkala
     - icon: github
       text: Github
-      href: https://github.com
+      href: https://github.com/aikkala
 
 ---
 
-About this blog
+This blog contains explorations into research ideas. These projects are pursued during my spare time, and generally are not mature enough to be submitted for peer review -- but maybe someone finds them interesting or useful!
